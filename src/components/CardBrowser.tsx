@@ -1,25 +1,42 @@
 import { useState, useMemo } from "react";
-import { characterCards, missionCards, Card, CharacterCard, Faction, Rarity } from "@/data/cards";
+import { characterCards, missionCards, Card, Faction, Rarity } from "@/data/cards";
 import { CardImage } from "./CardImage";
-import { CardDetail } from "./CardDetail";
 import { useDeck } from "@/contexts/DeckContext";
-import { canAddCard } from "@/lib/deckRules";
+import { canAddCard, DECK_RULES } from "@/lib/deckRules";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Search, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const factions: Faction[] = ["Konoha", "Sound", "Sand", "Akatsuki", "Neutral"];
 const rarities: Rarity[] = ["C", "UC", "R", "SR", "SecretV", "Legendary"];
+const chakraCosts = [1, 2, 3, 4, 5, 6];
 
 export const CardBrowser = () => {
-  const { characters, missions, addCard } = useDeck();
+  const { characters, missions, addCard, removeCard } = useDeck();
   const [search, setSearch] = useState("");
-  const [faction, setFaction] = useState<string>("all");
-  const [rarity, setRarity] = useState<string>("all");
-  const [maxCost, setMaxCost] = useState<string>("all");
-  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
+  const [selectedFactions, setSelectedFactions] = useState<Set<Faction>>(new Set());
+  const [selectedRarities, setSelectedRarities] = useState<Set<Rarity>>(new Set());
+  const [selectedCosts, setSelectedCosts] = useState<Set<number>>(new Set());
   const [tab, setTab] = useState("characters");
+
+  const toggle = <T,>(set: Set<T>, value: T, setter: (s: Set<T>) => void) => {
+    const next = new Set(set);
+    next.has(value) ? next.delete(value) : next.add(value);
+    setter(next);
+  };
+
+  const clearAll = () => {
+    setSearch("");
+    setSelectedFactions(new Set());
+    setSelectedRarities(new Set());
+    setSelectedCosts(new Set());
+  };
+
+  const activeFilterCount =
+    selectedFactions.size + selectedRarities.size + selectedCosts.size + (search ? 1 : 0);
 
   const filteredCharacters = useMemo(() => {
     return characterCards.filter((c) => {
@@ -28,18 +45,39 @@ export const CardBrowser = () => {
         c.name.toLowerCase().includes(search.toLowerCase()) ||
         c.version.toLowerCase().includes(search.toLowerCase()) ||
         c.keywords.some((k) => k.toLowerCase().includes(search.toLowerCase()));
-      const matchFaction = faction === "all" || c.faction === faction;
-      const matchRarity = rarity === "all" || c.rarity === rarity;
-      const matchCost = maxCost === "all" || c.chakraCost <= parseInt(maxCost);
+      const matchFaction = selectedFactions.size === 0 || selectedFactions.has(c.faction);
+      const matchRarity = selectedRarities.size === 0 || selectedRarities.has(c.rarity);
+      const matchCost = selectedCosts.size === 0 || selectedCosts.has(c.chakraCost);
       return matchSearch && matchFaction && matchRarity && matchCost;
     });
-  }, [search, faction, rarity, maxCost]);
+  }, [search, selectedFactions, selectedRarities, selectedCosts]);
 
   const filteredMissions = useMemo(() => {
     return missionCards.filter((m) => {
       return search === "" || m.title.toLowerCase().includes(search.toLowerCase());
     });
   }, [search]);
+
+  const charCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    characters.forEach((c) => (m[c.id] = (m[c.id] || 0) + 1));
+    return m;
+  }, [characters]);
+
+  const missionCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    missions.forEach((c) => (m[c.id] = (m[c.id] || 0) + 1));
+    return m;
+  }, [missions]);
+
+  const handleAdd = (card: Card) => {
+    if (canAddCard(card, characters, missions).allowed) addCard(card);
+  };
+
+  const handleRemove = (card: Card) => {
+    const count = card.type === "character" ? charCounts[card.id] : missionCounts[card.id];
+    if (count > 0) removeCard(card.id, card.type);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -55,43 +93,57 @@ export const CardBrowser = () => {
           />
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          <Select value={faction} onValueChange={setFaction}>
-            <SelectTrigger className="w-32 bg-secondary border-border text-sm h-8">
-              <SelectValue placeholder="Faction" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Factions</SelectItem>
-              {factions.map((f) => (
-                <SelectItem key={f} value={f}>{f}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Chakra cost chips */}
+        <FilterRow label="Chakra Cost">
+          {chakraCosts.map((c) => (
+            <Chip
+              key={c}
+              active={selectedCosts.has(c)}
+              onClick={() => toggle(selectedCosts, c, setSelectedCosts)}
+              accent="chakra"
+            >
+              {c}⬡
+            </Chip>
+          ))}
+        </FilterRow>
 
-          <Select value={rarity} onValueChange={setRarity}>
-            <SelectTrigger className="w-28 bg-secondary border-border text-sm h-8">
-              <SelectValue placeholder="Rarity" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Rarities</SelectItem>
-              {rarities.map((r) => (
-                <SelectItem key={r} value={r}>{r}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Faction chips */}
+        <FilterRow label="Faction">
+          {factions.map((f) => (
+            <Chip
+              key={f}
+              active={selectedFactions.has(f)}
+              onClick={() => toggle(selectedFactions, f, setSelectedFactions)}
+            >
+              {f}
+            </Chip>
+          ))}
+        </FilterRow>
 
-          <Select value={maxCost} onValueChange={setMaxCost}>
-            <SelectTrigger className="w-32 bg-secondary border-border text-sm h-8">
-              <SelectValue placeholder="Chakra Cost" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Any Cost</SelectItem>
-              {[1, 2, 3, 4, 5, 6].map((c) => (
-                <SelectItem key={c} value={String(c)}>≤ {c} Chakra</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Rarity chips */}
+        <FilterRow label="Rarity">
+          {rarities.map((r) => (
+            <Chip
+              key={r}
+              active={selectedRarities.has(r)}
+              onClick={() => toggle(selectedRarities, r, setSelectedRarities)}
+              accent={r === "SecretV" || r === "Legendary" ? "legendary" : undefined}
+            >
+              {r}
+            </Chip>
+          ))}
+        </FilterRow>
+
+        {activeFilterCount > 0 && (
+          <div className="flex items-center justify-between pt-1">
+            <Badge variant="secondary" className="text-xs">
+              {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} active
+            </Badge>
+            <Button variant="ghost" size="sm" onClick={clearAll} className="h-7 text-xs">
+              <X className="h-3 w-3 mr-1" /> Clear all
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -106,25 +158,28 @@ export const CardBrowser = () => {
         </TabsList>
 
         <TabsContent value="characters" className="flex-1 overflow-y-auto scrollbar-thin p-4">
-          {selectedCard && selectedCard.type === "character" && (
-            <div className="mb-4">
-              <CardDetail
-                card={selectedCard}
-                onAdd={() => addCard(selectedCard)}
-                canAdd={canAddCard(selectedCard, characters, missions).allowed}
-              />
-            </div>
-          )}
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-            {filteredCharacters.map((card) => (
-              <CardImage
-                key={card.id}
-                card={card}
-                size="sm"
-                onClick={() => setSelectedCard(card)}
-                className={selectedCard?.id === card.id ? "ring-2 ring-primary" : ""}
-              />
-            ))}
+          <p className="text-xs text-muted-foreground mb-3">
+            <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground">Click</kbd> to add ·{" "}
+            <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground">Right-click</kbd> to remove ·{" "}
+            <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground">Hover</kbd> to preview
+          </p>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {filteredCharacters.map((card) => {
+              const count = charCounts[card.id] || 0;
+              const canAdd = canAddCard(card, characters, missions).allowed;
+              return (
+                <CardImage
+                  key={card.id}
+                  card={card}
+                  size="sm"
+                  count={count}
+                  disabled={!canAdd && count === 0}
+                  enableHoverPreview
+                  onClick={() => handleAdd(card)}
+                  onContextMenu={() => handleRemove(card)}
+                />
+              );
+            })}
           </div>
           {filteredCharacters.length === 0 && (
             <p className="text-center text-muted-foreground py-8">No characters match your filters.</p>
@@ -132,25 +187,26 @@ export const CardBrowser = () => {
         </TabsContent>
 
         <TabsContent value="missions" className="flex-1 overflow-y-auto scrollbar-thin p-4">
-          {selectedCard && selectedCard.type === "mission" && (
-            <div className="mb-4">
-              <CardDetail
-                card={selectedCard}
-                onAdd={() => addCard(selectedCard)}
-                canAdd={canAddCard(selectedCard, characters, missions).allowed}
-              />
-            </div>
-          )}
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-            {filteredMissions.map((card) => (
-              <CardImage
-                key={card.id}
-                card={card}
-                size="sm"
-                onClick={() => setSelectedCard(card)}
-                className={selectedCard?.id === card.id ? "ring-2 ring-primary" : ""}
-              />
-            ))}
+          <p className="text-xs text-muted-foreground mb-3">
+            Pick exactly {DECK_RULES.MAX_MISSION_CARDS} unique missions.
+          </p>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+            {filteredMissions.map((card) => {
+              const count = missionCounts[card.id] || 0;
+              const canAdd = canAddCard(card, characters, missions).allowed;
+              return (
+                <CardImage
+                  key={card.id}
+                  card={card}
+                  size="sm"
+                  count={count}
+                  disabled={!canAdd && count === 0}
+                  enableHoverPreview
+                  onClick={() => handleAdd(card)}
+                  onContextMenu={() => handleRemove(card)}
+                />
+              );
+            })}
           </div>
           {filteredMissions.length === 0 && (
             <p className="text-center text-muted-foreground py-8">No missions match your search.</p>
@@ -158,5 +214,52 @@ export const CardBrowser = () => {
         </TabsContent>
       </Tabs>
     </div>
+  );
+};
+
+/* ---------- Local UI bits ---------- */
+
+const FilterRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div className="flex items-center gap-2 flex-wrap">
+    <span className="text-[10px] font-heading uppercase tracking-widest text-muted-foreground w-20 shrink-0">
+      {label}
+    </span>
+    <div className="flex flex-wrap gap-1.5">{children}</div>
+  </div>
+);
+
+const Chip = ({
+  active,
+  onClick,
+  children,
+  accent,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  accent?: "chakra" | "legendary";
+}) => {
+  const accentActive =
+    accent === "chakra"
+      ? "bg-chakra text-white border-chakra"
+      : accent === "legendary"
+      ? "bg-legendary text-background border-legendary"
+      : "bg-primary text-primary-foreground border-primary";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "px-3 py-1 rounded-full text-xs font-heading font-semibold border transition-all",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        active
+          ? accentActive
+          : "bg-secondary text-muted-foreground border-border hover:text-foreground hover:border-muted-foreground"
+      )}
+    >
+      {children}
+    </button>
   );
 };
